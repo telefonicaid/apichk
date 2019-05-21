@@ -397,7 +397,9 @@ The optional elements in a response are:
 * body: the expected body content. You can define a map of values that will
     be evaluated separatedly, taking the body content as a json map. This way
     you can include individual validations for every element into the body json content
-
+* swagger: an URL to a public endpoint of a swagger specification to validate the
+    response against. This parameter can also be a local path into the machine where
+    the tool is executed
 
 ```
 ---
@@ -413,14 +415,61 @@ stages:
             body:
                 name1: value1
                 name2: value2
+            swagger: https://docs.baikalplatform.com/user_profile/v3.3/user_profile.json
             ...
 ```
+## Loop
 
-## Single Test additional sections
+In case there is a need for an stage to be repeated until some specific response is 
+received, we can define a loop stage. The name of the stage is not relevant but it is
+the content. Instead of defining request and response elements, we can define the
+maximum times to iterate, the step sleep in seconds and the condition to leave the loop.
 
-Next sections can be defined in any stages spec file but will only take
-effect in case of a single test execution. In a a multitest environment they are
-ignored by the tool
+The mandatory elements of a loop are:
+* condition: Placeholder with a boolean expression to be evaluated at the end of every loop step.
+    If the expression returns true, the loop is finished. Otherwise, a new step with the
+    same stages wrapped into the loop is executed again.
+* stages: List of stages to be executed in every loop step. The syntax for these stages
+    is the same as in the case of the general list of stages.
+
+The optional elements of a loop are:
+* max-retries: Max number of loop steps to be executed before exiting with error
+* sleep: Time in seconds to wait between loop steps.
+
+```
+- apimsgr-login-status-polling:
+    stages:
+    - apimsgr-login-status:
+        request:
+            method: POST
+            url: "{{ config.login-status-url }}"
+            headers:
+            Content-Type: multipart/form-data
+            body:
+            request:
+                jsonrpc: 2.0
+                id: 2
+                method: 'Login.3.status'
+                params:
+                sessionToken: "{{ apimsgr-login-request.response.body.result.sessionToken }}"
+            x-tuenti-apicontext:
+                installationId: "{{ config.installationId }}"
+                deviceFamily: wbteNCLH4mncE2ffKH35wvWlAEHIuWUTT8EfQu5K
+                screenSize: xhdpi
+        response:
+            status-code: 200
+    condition: "{{ $equals( apimsgr-login-status.response.body.result.nextStep, 'finished' ) }}"
+    max-retries: 10
+    sleep: 2
+```
+
+In every loop step, the involved stages are reset to their original values.
+
+## Additional Sections
+
+Next sections can be defined in any stages spec file. Some will take effect at the
+end of every test case and others will do it at the end of the complete execution
+of the tool.
 
 ### Dump
 
@@ -441,16 +490,22 @@ dump:
     decripted_id_token: "{{ $pretty($jwt_decode(token.response.body.id_token)) }}"
 ```
 
-Remember that this dump is only shown if launched a single test execution
+> Note:
+>   Dump section has effect only on single test cases. When tool executes more than one
+>   test case it is ignored
 
 ### Publish
 
-Another section that is evaluated at the end of every single test execution is the publish one.
-There you can define a network endpoint or a file where writting out some of the resultant
-values of the testing processs. There is a limited set of publishers that you can use
-for this purpose.
+This section defines one or several external systems which will receive the defined results
+of successful executions. You can define a network endpoint or a file where writting out 
+some of the resultant values of the testing process. There is a limited set of publishers
+that you can use for this purpose.
 
-Remember that this publish action is only executed if tool launches a single test case
+In case that the execution comprises more than just only one test, the values defined
+for this section are updated at the end of every case execution. This allows to publish
+variables that are specific to every test.
+
+Once the tool ends all the cases, it publish what has been saved during the execution
 
 #### Postman publisher
 
@@ -523,6 +578,41 @@ publish:
     variables:
       Token: "{{ token.response.body.access_token }}"
       RefreshToken: "{{ token.response.body.refresh_token }}"
+```
+
+##### Multiple test publish
+
+When executing several tests at once, it is possible to use placeholders to gather
+different variables for the different cases into the publisher. Once everything
+finishes, the publisher will send to the configured external systems the saved
+variables.
+
+Let's focus on the previous example and modify the name of the variables this way:
+```
+...
+publish:
+  postman:
+    url: "{{ config.publish.postman.url }}"
+    api-key: "{{ config.publish.postman.api-key }}"
+    environment: "{{ config.publish.postman.environment }}"
+    variables:
+      Token: "{{ token.response.body.access_token }}"
+      RefreshToken: "{{ token.response.body.refresh_token }}"
+      "{{ $concat('Token[', config.username,']') }}": "{{ token.response.body.access_token }}"
+      "{{ $concat('RefreshToken[', config.username,']') }}": "{{ token.response.body.refresh_token }}"
+```
+
+Now the var names depend on the `config.username` so that for every new value
+on that specific config, there will be new published variables like:
+
+```
+Token[+34666888888]
+RefreshToken[+34666888888]
+Token[+34666777777]
+RefreshToken[+34666777777]
+...
+etc
+...
 ```
 
 ## Multiple test output
@@ -710,6 +800,20 @@ returns
 <?xml version="1.0" encoding="UTF-8"?><saml2p:AuthnRequest xmlns:saml2p="urn:oasis:names:tc:SAML:2.0:protocol" AssertionConsumerServiceURL="https://auth.ec-pre.baikalplatform.com/saml-SSO" Destination="https://wvpre.movistar.com.ec/MiMovistar_WV/" ForceAuthn="false" ID="ae669gjbcbe9d7737f3e8if9de6d7" IsPassive="false" IssueInstant="2019-02-11T12:39:11.855Z" ProtocolBinding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" Version="2.0"><saml2:Issuer xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion">https://auth.ec-pre.baikalplatform.com/</saml2:Issuer><md:Extensions xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata"><req:AcrValues xmlns:req="http://www.v7security.com/schema/2015/04/request">3</req:AcrValues></md:Extensions></saml2p:AuthnRequest>
 ```
 
+### equals
+
+Returns true if incoming parameters are equals
+
+params:
+* value1: first value to evaluate
+* value2: second value to evaluate
+* valueN: N value to evaluate
+i.e:
+```
+"{{ $equals('what', 'what', 'what') }}"
+```
+returns _true_ boolean value
+
 ### fragment
 
 Returns the fragment part of an URL. If the URL does not have fragment, returns empty value
@@ -803,6 +907,18 @@ i.e.
 "{{ $jwt_encode('my_key', '{"my": "payload"}) }}"
 ```
 returns _eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJteSI6InBheWxvYWQifQ.DgiGYk5rNAcEXTRX3cYOMPIIhqTvvlFlVxaEHJzKasw_
+
+### not_
+
+Returns a boolean with the opposite value of the parameter
+
+params:
+* value: the boolean value to apply the not operand
+i.e.
+```
+"{{ $not_(true) }}"
+```
+returns _false_
 
 ### pretty
 
